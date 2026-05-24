@@ -118,7 +118,13 @@ export async function runSync(): Promise<SyncSummary> {
     );
     campaigns.push(...page.data);
     for (const inc of page.included ?? []) {
-      if (inc.type === "tag") tagNameById.set(inc.id, inc.attributes.name);
+      if (inc.type === "tag") {
+        // The fallback branch of IncludedResource passthrough-types `attributes`
+        // as `unknown`. We've narrowed on `type === "tag"` so it's the TagResource
+        // shape — cast to its known structure.
+        const tag = inc as { id: string; attributes: { name: string } };
+        tagNameById.set(tag.id, tag.attributes.name);
+      }
     }
     nextUrl = page.links?.next ?? null;
     pageCount += 1;
