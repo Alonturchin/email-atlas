@@ -13,7 +13,12 @@ interface SessionUser {
   role: "ADMIN" | "MEMBER";
 }
 
-export function TopBar({ user }: { user: SessionUser | null }) {
+interface TopBarProps {
+  user: SessionUser | null;
+  lastSyncedAt: string | null;
+}
+
+export function TopBar({ user, lastSyncedAt }: TopBarProps) {
   const { filters, setFilters } = useFilters();
   const [localQ, setLocalQ] = useState(filters.q ?? "");
   const [menuOpen, setMenuOpen] = useState(false);
@@ -80,6 +85,8 @@ export function TopBar({ user }: { user: SessionUser | null }) {
           </Link>
         )}
 
+        <LastSyncChip iso={lastSyncedAt} />
+
         {user && (
           <div className="relative">
             <button
@@ -138,6 +145,35 @@ export function TopBar({ user }: { user: SessionUser | null }) {
       </div>
     </header>
   );
+}
+
+function LastSyncChip({ iso }: { iso: string | null }) {
+  if (!iso) return null;
+  const date = new Date(iso);
+  return (
+    <span
+      className="hidden md:inline-flex h-9 items-center gap-1.5 rounded-md border border-neutral-200 bg-white px-3 text-[10px] font-medium uppercase tracking-widest text-neutral-500"
+      title={`Last Klaviyo sync: ${date.toLocaleString("en-US", {
+        timeZone: "America/New_York",
+        timeZoneName: "short",
+      })}`}
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+      Synced {formatRelative(date)}
+    </span>
+  );
+}
+
+function formatRelative(date: Date): string {
+  const diff = Date.now() - date.getTime();
+  const m = Math.floor(diff / 60_000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(diff / 3_600_000);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(diff / 86_400_000);
+  if (d < 7) return `${d}d ago`;
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 function LogoMark({ className }: { className?: string }) {
