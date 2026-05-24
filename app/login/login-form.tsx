@@ -9,11 +9,18 @@ const initial: SignInState = {};
 export function LoginForm() {
   const sp = useSearchParams();
   const from = sp.get("from") ?? "/";
+  const justChanged = sp.get("changed") === "1";
   const [state, formAction, isPending] = useActionState(signInAction, initial);
 
   return (
     <form action={formAction} className="space-y-4">
       <input type="hidden" name="from" value={from} />
+
+      {justChanged && (
+        <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+          Password updated. Sign in with your new password.
+        </p>
+      )}
 
       <div>
         <label

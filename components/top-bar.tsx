@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Heart, LogOut, Search, Shield } from "lucide-react";
+import { Heart, KeyRound, LogOut, Search, Shield } from "lucide-react";
 import { useEffect, useState } from "react";
 import { signOut } from "next-auth/react";
 import { useFilters } from "@/lib/hooks/use-filters";
@@ -114,6 +114,14 @@ export function TopBar({ user }: { user: SessionUser | null }) {
                       {user.role}
                     </div>
                   </div>
+                  <Link
+                    href="/account/password"
+                    onClick={() => setMenuOpen(false)}
+                    className="flex w-full items-center gap-2 border-b border-neutral-100 px-3 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-50 hover:text-neutral-900"
+                  >
+                    <KeyRound className="h-3.5 w-3.5" />
+                    Change password
+                  </Link>
                   <button
                     type="button"
                     onClick={() => signOut({ callbackUrl: "/login" })}

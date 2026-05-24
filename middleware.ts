@@ -35,6 +35,21 @@ export default auth((req) => {
     return NextResponse.redirect(new URL("/", req.nextUrl.origin));
   }
 
+  // Force users with a temporary password through /account/password before
+  // they can do anything else. Allowlist the password page itself plus the
+  // sign-out endpoint so they can bail out if they don't remember the temp.
+  if (session?.user?.mustChangePassword) {
+    const isAllowedDuringForcedChange =
+      pathname === "/account/password" ||
+      pathname.startsWith("/api/auth/") ||
+      pathname === "/api/sync";
+    if (!isAllowedDuringForcedChange) {
+      return NextResponse.redirect(
+        new URL("/account/password", req.nextUrl.origin),
+      );
+    }
+  }
+
   // Admin gating
   if (pathname.startsWith("/admin")) {
     if (!session || session.user.role !== "ADMIN") {
