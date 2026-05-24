@@ -1,0 +1,84 @@
+# Production stack. Co-exists with Flow-monitor on the same VPS — does NOT
+# bind ports 80/443; the existing flowmonitor-caddy-1 reverse-proxies us via
+# the shared docker network (see deploy notes in README).
+#
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+services:
+  app:
+    build:
+      context: .
+      target: prod
+    image: inbox-atlas-app:latest
+    container_name: inbox-atlas-app
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/login"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  db:
+    image: postgres:16-alpine
+    container_name: inbox-atlas-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: inboxatlas
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d inboxatlas"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Daily 06:00 America/New_York: POST /api/sync against the in-network app.
+  cron:
+    image: alpine:3
+    container_name: inbox-atlas-cron
+    restart: unless-stopped
+    environment:
+      TZ: America/New_York
+    env_file:
+      - .env.production
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        apk add --no-cache curl tzdata >/dev/null 2>&1
+        cp /usr/share/zoneinfo/America/New_York /etc/localtime
+        echo "America/New_York" > /etc/timezone
+
+        cat > /run.sh <<'SCRIPT'
+        #!/bin/sh
+        TS="$$(date -Iseconds)"
+        echo "[$${TS}] [klaviyo-sync] start"
+        if curl -fsS -X POST -H "x-sync-token: $${SYNC_TOKEN}" -o /tmp/sync.out --max-time 1800 http://app:3000/api/sync; then
+          echo "[$$(date -Iseconds)] [klaviyo-sync] ok: $$(cat /tmp/sync.out)"
+        else
+          code=$$?
+          echo "[$$(date -Iseconds)] [klaviyo-sync] FAIL exit=$${code} body=$$(cat /tmp/sync.out 2>/dev/null || echo '<none>')"
+        fi
+        SCRIPT
+        chmod +x /run.sh
+
+        echo "0 6 * * * /run.sh > /proc/1/fd/1 2>&1" > /etc/crontabs/root
+
+        echo "[cron] timezone: $$(date +%Z) ($$(date -Iseconds))"
+        echo "[cron] crontab:"
+        cat /etc/crontabs/root
+        exec crond -f -L /dev/stdout
+    depends_on:
+      app:
+        condition: service_started
+
+volumes:
+  pgdata:

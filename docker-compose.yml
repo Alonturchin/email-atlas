@@ -1,0 +1,83 @@
+services:
+  web:
+    build:
+      context: .
+      target: dev
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules
+      - next_cache:/app/.next
+    env_file:
+      - .env.local
+    environment:
+      # Force polling-based file watching so Next.js picks up new files on
+      # Windows + Docker bind mounts (where inotify events don't propagate).
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: emailintel
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d emailintel"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Daily auto-sync at 06:00 America/New_York. Fires the same
+  # POST /api/sync endpoint the dashboard uses, guarded by SYNC_TOKEN.
+  cron:
+    image: alpine:3
+    restart: unless-stopped
+    environment:
+      TZ: America/New_York
+    env_file:
+      - .env.local
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        apk add --no-cache curl tzdata >/dev/null 2>&1
+        cp /usr/share/zoneinfo/America/New_York /etc/localtime
+        echo "America/New_York" > /etc/timezone
+
+        cat > /run.sh <<'SCRIPT'
+        #!/bin/sh
+        TS="$$(date -Iseconds)"
+        echo "[$${TS}] [klaviyo-sync] start"
+        if curl -fsS -X POST -H "x-sync-token: $${SYNC_TOKEN}" -o /tmp/sync.out http://web:3000/api/sync; then
+          echo "[$$(date -Iseconds)] [klaviyo-sync] ok: $$(cat /tmp/sync.out)"
+        else
+          code=$$?
+          echo "[$$(date -Iseconds)] [klaviyo-sync] FAIL exit=$${code} body=$$(cat /tmp/sync.out 2>/dev/null || echo '<none>')"
+        fi
+        SCRIPT
+        chmod +x /run.sh
+
+        echo "0 6 * * * /run.sh > /proc/1/fd/1 2>&1" > /etc/crontabs/root
+
+        echo "[cron] timezone: $$(date +%Z) ($$(date -Iseconds))"
+        echo "[cron] crontab:"
+        cat /etc/crontabs/root
+        echo "[cron] starting crond"
+        exec crond -f -L /dev/stdout
+    depends_on:
+      web:
+        condition: service_started
+
+volumes:
+  pgdata:
+  node_modules:
+  next_cache:

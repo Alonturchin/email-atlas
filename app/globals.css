@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+@theme {
+  /* Helvetica via system stack — uses real Helvetica on macOS, Arial fallback on Windows/Linux.
+     No web-font download; instant render. */
+  --font-sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-display: "Helvetica Neue", Helvetica, Arial, sans-serif;
+
+  /* Brand accent — burnt orange. Used for active filters, favorites, primary CTAs. */
+  --color-accent: #ea580c;
+  --color-accent-hover: #c2410c;
+}
+
+html,
+body {
+  background-color: #ffffff;
+  color: #171717;
+}
+
+input[type="range"] {
+  accent-color: var(--color-accent);
+}
