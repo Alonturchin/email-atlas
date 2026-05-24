@@ -1,9 +1,15 @@
 import NextAuth, { type DefaultSession } from "next-auth";
+// Type-only import forces TS to resolve the `next-auth/jwt` subpath so the
+// `declare module` augmentation below is recognized by `next build`'s strict
+// type check. Without this, augmentation fails with "module not found".
+import type { JWT as _JWT } from "next-auth/jwt";
 import Credentials from "next-auth/providers/credentials";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+// Silence "unused import" — _JWT is consumed implicitly by the augmentation.
+type _Unused = _JWT;
 
 declare module "next-auth" {
   interface Session {
