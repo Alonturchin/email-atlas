@@ -9,10 +9,15 @@ import {
 } from "./eikona-flows";
 import {
   CampaignMessageResponse,
+  type CampaignMessageResponseT,
   CampaignValuesReportResponse,
+  type CampaignValuesReportResponseT,
   CampaignsListResponse,
+  type CampaignsListResponseT,
   MetricsListResponse,
+  type MetricsListResponseT,
   TemplateResponse,
+  type TemplateResponseT,
   type CampaignResource,
 } from "./types";
 
@@ -39,7 +44,10 @@ export async function runSync(): Promise<SyncSummary> {
   // 1. Resolve Placed Order metric id (needed for the values report).
   // Spec said to filter by name, but Klaviyo only allows filtering metrics by
   // integration.name / integration.category — we fetch all and match by name.
-  const metrics = await klaviyoGet("/api/metrics/", MetricsListResponse);
+  const metrics: MetricsListResponseT = await klaviyoGet(
+    "/api/metrics/",
+    MetricsListResponse,
+  );
   const placedOrder = metrics.data.find(
     (m) => m.attributes.name === "Placed Order",
   );
@@ -50,7 +58,7 @@ export async function runSync(): Promise<SyncSummary> {
 
   // 2. Pull all campaign metrics in one POST.
   log("fetching campaign-values-report (last 365 days)");
-  const report = await klaviyoPost(
+  const report: CampaignValuesReportResponseT = await klaviyoPost(
     "/api/campaign-values-reports/",
     CampaignValuesReportResponse,
     {
@@ -98,7 +106,7 @@ export async function runSync(): Promise<SyncSummary> {
   let nextUrl: string | null = null;
   let pageCount = 0;
   do {
-    const page = await klaviyoGet(
+    const page: CampaignsListResponseT = await klaviyoGet(
       nextUrl ?? "/api/campaigns/",
       CampaignsListResponse,
       nextUrl
@@ -150,7 +158,7 @@ export async function runSync(): Promise<SyncSummary> {
       const messageRef = c.relationships?.["campaign-messages"]?.data?.[0];
 
       if (messageRef) {
-        const msg = await klaviyoGet(
+        const msg: CampaignMessageResponseT = await klaviyoGet(
           `/api/campaign-messages/${messageRef.id}/`,
           CampaignMessageResponse,
         );
@@ -164,7 +172,7 @@ export async function runSync(): Promise<SyncSummary> {
         templateId = msg.data.relationships?.template?.data?.id ?? null;
         if (templateId) {
           try {
-            const tpl = await klaviyoGet(
+            const tpl: TemplateResponseT = await klaviyoGet(
               `/api/templates/${templateId}/`,
               TemplateResponse,
             );

@@ -2,7 +2,9 @@ import "server-only";
 import { klaviyoGet, klaviyoPost } from "./client";
 import {
   FlowsListResponse,
+  type FlowsListResponseT,
   FlowValuesReportResponse,
+  type FlowValuesReportResponseT,
   type FlowResource,
 } from "./types";
 
@@ -72,7 +74,10 @@ async function listEikonaFlows(): Promise<FlowResource[]> {
   const out: FlowResource[] = [];
   let next: string | null = null;
   do {
-    const page = await klaviyoGet(next ?? "/api/flows/", FlowsListResponse);
+    const page: FlowsListResponseT = await klaviyoGet(
+      next ?? "/api/flows/",
+      FlowsListResponse,
+    );
     for (const f of page.data) {
       if (isEikonaFlowName(f.attributes.name ?? null)) out.push(f);
     }
@@ -98,7 +103,7 @@ async function fetchFlowMetrics(
   const BATCH = 50;
   for (let i = 0; i < flowIds.length; i += BATCH) {
     const batch = flowIds.slice(i, i + BATCH);
-    const report = await klaviyoPost(
+    const report: FlowValuesReportResponseT = await klaviyoPost(
       "/api/flow-values-reports/",
       FlowValuesReportResponse,
       {
