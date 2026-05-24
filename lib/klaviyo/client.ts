@@ -102,20 +102,24 @@ async function rawFetch(
   }
 }
 
-export async function klaviyoGet<T>(
+// Generic over the schema type itself (rather than its output) so TypeScript
+// can always infer the return type from the passed schema. `z.ZodType<T>`
+// inference is brittle with `.passthrough()` schemas — using `z.infer<S>`
+// instead is the documented-working pattern.
+export async function klaviyoGet<S extends z.ZodTypeAny>(
   path: string,
-  schema: z.ZodType<T>,
+  schema: S,
   query?: Record<string, string | undefined>,
-): Promise<T> {
+): Promise<z.infer<S>> {
   const json = await rawFetch(path, { method: "GET", query });
   return schema.parse(json);
 }
 
-export async function klaviyoPost<T>(
+export async function klaviyoPost<S extends z.ZodTypeAny>(
   path: string,
-  schema: z.ZodType<T>,
+  schema: S,
   body: unknown,
-): Promise<T> {
+): Promise<z.infer<S>> {
   const json = await rawFetch(path, { method: "POST", body });
   return schema.parse(json);
 }
