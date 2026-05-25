@@ -5,7 +5,10 @@
 #   docker compose -f docker-compose.prod.yml up -d --build
 #
 services:
-  app:
+  # Service name intentionally NOT "app" — Flow-monitor also has an `app`
+  # service on this VPS and its Caddy is attached to both networks, so a
+  # shared `app` DNS alias causes cross-stack routing collisions.
+  web:
     build:
       context: .
       target: prod
@@ -61,7 +64,7 @@ services:
         #!/bin/sh
         TS="$$(date -Iseconds)"
         echo "[$${TS}] [klaviyo-sync] start"
-        if curl -fsS -X POST -H "x-sync-token: $${SYNC_TOKEN}" -o /tmp/sync.out --max-time 1800 http://app:3000/api/sync; then
+        if curl -fsS -X POST -H "x-sync-token: $${SYNC_TOKEN}" -o /tmp/sync.out --max-time 1800 http://inbox-atlas-app:3000/api/sync; then
           echo "[$$(date -Iseconds)] [klaviyo-sync] ok: $$(cat /tmp/sync.out)"
         else
           code=$$?
@@ -77,7 +80,7 @@ services:
         cat /etc/crontabs/root
         exec crond -f -L /dev/stdout
     depends_on:
-      app:
+      web:
         condition: service_started
 
 volumes:
