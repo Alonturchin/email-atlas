@@ -56,39 +56,88 @@ export async function runSync(): Promise<SyncSummary> {
   }
   log(`placed-order metric id: ${placedOrder.id}`);
 
-  // 2. Pull all campaign metrics in one POST.
-  log("fetching campaign-values-report (last 365 days)");
-  const report: CampaignValuesReportResponseT = await klaviyoPost(
-    "/api/campaign-values-reports/",
-    CampaignValuesReportResponse,
-    {
-      data: {
-        type: "campaign-values-report",
-        attributes: {
-          statistics: [
-            "recipients",
-            "open_rate",
-            "click_rate",
-            "click_to_open_rate",
-            "conversion_rate",
-            "conversion_value",
-            "unsubscribe_rate",
-            "average_order_value",
-          ],
-          timeframe: { key: "last_365_days" },
-          conversion_metric_id: placedOrder.id,
-        },
-      },
-    },
-  );
+  // 2. Pull all campaign metrics. Klaviyo caps campaign-values-reports at
+  // 365 days per request, so we fan out across 7 year-long windows to cover
+  // ~7 years of history. The first window uses the named `last_365_days`
+  // key; subsequent windows use explicit start/end ranges.
+  log("fetching campaign-values-reports (7 windows × 365 days)");
 
-  type Stats =
-    (typeof report.data.attributes.results)[number]["statistics"];
+  const STATISTICS = [
+    "recipients",
+    "open_rate",
+    "click_rate",
+    "click_to_open_rate",
+    "conversion_rate",
+    "conversion_value",
+    "unsubscribe_rate",
+    "average_order_value",
+  ];
+
+  type Stats = NonNullable<
+    CampaignValuesReportResponseT["data"]["attributes"]["results"]
+  >[number]["statistics"];
+
   const statsByCampaign = new Map<string, Stats>();
-  for (const row of report.data.attributes.results) {
-    statsByCampaign.set(row.groupings.campaign_id, row.statistics);
+
+  type Window =
+    | { key: "last_365_days" }
+    | { start: string; end: string };
+  const windows: Window[] = [{ key: "last_365_days" }];
+  const now = new Date();
+  for (let i = 1; i <= 6; i++) {
+    // Each previous-year window is [now - (i+1) years, now - i years]
+    const end = new Date(now);
+    end.setUTCFullYear(end.getUTCFullYear() - i);
+    end.setUTCHours(23, 59, 59, 999);
+    const start = new Date(end);
+    start.setUTCFullYear(start.getUTCFullYear() - 1);
+    start.setUTCDate(start.getUTCDate() + 1);
+    start.setUTCHours(0, 0, 0, 0);
+    windows.push({ start: start.toISOString(), end: end.toISOString() });
   }
-  log(`metrics rows: ${statsByCampaign.size}`);
+
+  for (const tf of windows) {
+    const label =
+      "key" in tf
+        ? tf.key
+        : `${tf.start.slice(0, 10)}→${tf.end.slice(0, 10)}`;
+    try {
+      const report: CampaignValuesReportResponseT = await klaviyoPost(
+        "/api/campaign-values-reports/",
+        CampaignValuesReportResponse,
+        {
+          data: {
+            type: "campaign-values-report",
+            attributes: {
+              statistics: STATISTICS,
+              timeframe: "key" in tf ? { key: tf.key } : tf,
+              conversion_metric_id: placedOrder.id,
+            },
+          },
+        },
+      );
+      let added = 0;
+      for (const row of report.data.attributes.results) {
+        const cid = row.groupings.campaign_id;
+        const existing = statsByCampaign.get(cid);
+        // Prefer the row with the most recipients — that's the window where
+        // the campaign actually sent. Other windows might show partial data.
+        if (
+          !existing ||
+          (existing.recipients ?? 0) < (row.statistics.recipients ?? 0)
+        ) {
+          statsByCampaign.set(cid, row.statistics);
+          added += 1;
+        }
+      }
+      log(
+        `  ${label}: ${report.data.attributes.results.length} rows (+${added} new); total ${statsByCampaign.size}`,
+      );
+    } catch (e) {
+      log(`  ${label}: FAILED ${(e as Error).message}`);
+    }
+  }
+  log(`metrics rows total: ${statsByCampaign.size}`);
 
   // 2b. EIKONA flow overlay — draft campaigns whose real metrics live in a
   // matching flow ("(EIKONA) Campaign Experiment - <same date+description>").
@@ -210,7 +259,9 @@ export async function runSync(): Promise<SyncSummary> {
       if (flowMetrics) flowOverlays += 1;
 
       const derived = deriveTagsFromName(c.attributes.name);
-      const data = {
+
+      // Core fields are always overwritten with fresh data.
+      const coreData = {
         name: c.attributes.name,
         subject,
         previewText,
@@ -226,25 +277,51 @@ export async function runSync(): Promise<SyncSummary> {
         holiday: derived.holiday,
         season: derived.season,
         audienceNames: JSON.stringify(audienceIds),
-        recipients: flowMetrics
-          ? flowMetrics.recipients
-          : Math.round(stats?.recipients ?? 0),
-        openRate: flowMetrics?.openRate ?? stats?.open_rate ?? 0,
-        clickRate: flowMetrics?.clickRate ?? stats?.click_rate ?? 0,
-        ctor: flowMetrics?.ctor ?? stats?.click_to_open_rate ?? 0,
-        conversionRate:
-          flowMetrics?.conversionRate ?? stats?.conversion_rate ?? 0,
-        revenue: flowMetrics?.revenue ?? stats?.conversion_value ?? 0,
-        aov: flowMetrics?.aov ?? stats?.average_order_value ?? 0,
-        unsubscribeRate:
-          flowMetrics?.unsubscribeRate ?? stats?.unsubscribe_rate ?? 0,
         lastSyncedAt: new Date(),
       };
 
+      // Metrics are only included when we have something real to write.
+      // Otherwise (campaign fell out of all report windows, or report returned
+      // a zero-recipient row), we preserve whatever metrics are already in the
+      // DB rather than clobbering them with zeros.
+      const hasFreshStats = !!stats && (stats.recipients ?? 0) > 0;
+      const hasFreshMetrics = !!flowMetrics || hasFreshStats;
+      const metricsData = hasFreshMetrics
+        ? {
+            recipients: flowMetrics
+              ? flowMetrics.recipients
+              : Math.round(stats?.recipients ?? 0),
+            openRate: flowMetrics?.openRate ?? stats?.open_rate ?? 0,
+            clickRate: flowMetrics?.clickRate ?? stats?.click_rate ?? 0,
+            ctor: flowMetrics?.ctor ?? stats?.click_to_open_rate ?? 0,
+            conversionRate:
+              flowMetrics?.conversionRate ?? stats?.conversion_rate ?? 0,
+            revenue: flowMetrics?.revenue ?? stats?.conversion_value ?? 0,
+            aov: flowMetrics?.aov ?? stats?.average_order_value ?? 0,
+            unsubscribeRate:
+              flowMetrics?.unsubscribeRate ?? stats?.unsubscribe_rate ?? 0,
+          }
+        : {};
+
       await prisma.campaign.upsert({
         where: { id: c.id },
-        create: { id: c.id, ...data },
-        update: data,
+        // On create, seed metrics to 0 so the schema's NOT NULL constraints
+        // are satisfied; metricsData overrides when fresh data is available.
+        create: {
+          id: c.id,
+          ...coreData,
+          recipients: 0,
+          openRate: 0,
+          clickRate: 0,
+          ctor: 0,
+          conversionRate: 0,
+          revenue: 0,
+          aov: 0,
+          unsubscribeRate: 0,
+          ...metricsData,
+        },
+        // On update, omitting metric keys preserves their existing values.
+        update: { ...coreData, ...metricsData },
       });
       upserted += 1;
     } catch (e) {
